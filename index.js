@@ -70,15 +70,43 @@ const rulesUniversal = {
 
 const rules = {
 	blockQuote: Object.assign({}, markdown.defaultRules.blockQuote, {
-		match: (source, state, prevSource) => !/^$|\n *$/.test(prevSource) || state.inQuote ? null : /^( *> [^\n]*(\n *> [^\n]*)*\n?)/.exec(source),
+		// Comportamento ORIGINALE:
+		//match: (source, state, prevSource) => !/^$|\n *$/.test(prevSource) || state.inQuote ? null : /^( *> [^\n]*(\n *> [^\n]*)*\n?)/.exec(source),
+		//  - richiedeva una riga vuota (blank line) prima del ">" per riconoscere un block quote;
+		//  - in pratica, una citazione tipo:
+		//        Riga di testo
+		//        > Citazione
+		//    NON veniva riconosciuta, perché non c'era la riga vuota tra la riga di testo e il ">".
+		//  - questo è diverso dal comportamento reale di Slack, dove è sufficiente che la riga inizi con ">".
+		//
+		// In questo fork ho RIMOSSO il controllo sul prevSource e rilassato la regex:
+		//  - NON richiediamo più una riga vuota prima del ">";
+		//  - accettiamo sempre una o più righe consecutive che iniziano con ">";
+		//  - consentiamo sia ">testo" sia "> testo" (spazio dopo ">" opzionale).
+		//
+		// Questo risolve il problema dell'anteprima dove, ad esempio:
+		//    :speech_balloon: *Messaggio*
+		//    > ${body}
+		// veniva mostrato con il carattere ">" letterale e senza indentazione:
+		//  - ora la riga che inizia con ">" viene SEMPRE trattata come block quote,
+		//    anche se segue immediatamente un'altra riga di testo, come fa Slack.
+		match: (source) => /^( *> ?[^\n]*(\n *> ?[^\n]*)*\n?)/.exec(source),
 		parse: (capture, parse, state) => {
-			const all = capture[0];
+			const all = capture[0]; // tutto il blocco di righe che iniziano con ">"
+			// Rimuove il prefisso di sintassi di citazione (" >", con spazio opzionale)
+			// da OGNI riga del blocco, così da passare al parser interno solo il contenuto
+			// vero e proprio (senza i simboli ">").
 			const removeSyntaxRegex = /^ *> ?/gm;
 			const content = all.replace(removeSyntaxRegex, "");
 
+			// Imposta dei flag nello "state" per indicare che stiamo parsando il contenuto di una citazione:
+			//  - inQuote: ci permette, se necessario, di avere regole diverse dentro un block quote;
+			//  - inline: indica al parser semplice-markdown che stiamo lavorando in modalità inline (come fa la libreria originale).
 			state.inQuote = true;
 			state.inline = true;
-			const parsed = parse(content, state);
+			const parsed = parse(content, state); // parse ricorsivo del contenuto interno
+			// Ripristino "soft" dei flag: se ALTRE parti del parsing impostano questi
+			// valori, non li sovrascriviamo a false in modo aggressivo.
 			state.inQuote = state.inQuote || false;
 			state.inline = state.inline || false;
 
